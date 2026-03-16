@@ -1,17 +1,17 @@
 # gitlab-http-api-mcp
 
-Самодельный MCP-сервер для GitLab, который ходит напрямую в HTTP API GitLab
-(`GITLAB_API_URL`, `GITLAB_PERSONAL_ACCESS_TOKEN`) и предоставляет инструменты
-для работы с проектами, задачами и merge request'ами.
+MCP (Model Context Protocol) server for **GitLab** that talks directly to the GitLab HTTP API
+using `GITLAB_API_URL` and `GITLAB_PERSONAL_ACCESS_TOKEN`. It exposes tools for working with
+projects, issues, and merge requests.
 
-## Требования
+## Requirements
 
 - Node.js 18+
-- Доступный GitLab HTTP API и персональный токен с нужными правами.
+- Accessible GitLab HTTP API and a personal access token with sufficient permissions.
 
-## Установка
+## Install
 
-### Из исходников (GitHub)
+### From source (GitHub)
 
 ```bash
 git clone https://github.com/rkorablin/gitlab-http-api-mcp.git
@@ -19,26 +19,30 @@ cd gitlab-http-api-mcp
 npm install
 ```
 
-### Из npm
+### From npm
 
-Локально в проект:
+As a local dependency:
 
 ```bash
 npm install gitlab-http-api-mcp
 ```
 
-Глобально (для `npx` / CLI):
+Or globally (for `npx` / CLI usage):
 
 ```bash
 npm install -g gitlab-http-api-mcp
 ```
 
-## Переменные окружения
+## Configuration
 
-- `GITLAB_API_URL` — базовый URL API, например `https://gitlab.example.com/api/v4`
-- `GITLAB_PERSONAL_ACCESS_TOKEN` — персональный токен доступа GitLab
+Environment variables:
 
-## Запуск в режиме MCP (stdio)
+- `GITLAB_API_URL` — base API URL, for example `https://gitlab.example.com/api/v4`
+- `GITLAB_PERSONAL_ACCESS_TOKEN` — GitLab personal access token
+
+## Usage
+
+### Standalone (stdio)
 
 ```bash
 export GITLAB_API_URL="https://gitlab.example.com/api/v4"
@@ -46,11 +50,11 @@ export GITLAB_PERSONAL_ACCESS_TOKEN="glpat-..."
 node server.mjs
 ```
 
-## Интеграция с Cursor / другим MCP‑хостом
+### Cursor / MCP host
 
-Добавьте сервер в конфиг MCP (например, `.cursor/mcp.json` → `mcpServers`).
+Add the server to your MCP config (for example `.cursor/mcp.json` → `mcpServers`).
 
-### Вариант 1: Локальный клон
+#### Option 1: Local clone
 
 ```json
 "gitlab": {
@@ -63,9 +67,9 @@ node server.mjs
 }
 ```
 
-### Вариант 2: npm / npx
+#### Option 2: npm / npx
 
-Если пакет установлен глобально:
+If installed globally:
 
 ```json
 "gitlab": {
@@ -77,7 +81,7 @@ node server.mjs
 }
 ```
 
-Через `npx`:
+Or via `npx`:
 
 ```json
 "gitlab": {
