@@ -11,20 +11,10 @@
 
 ## Установка
 
-### Из исходников (GitHub / GitLab)
-
-GitHub:
+### Из исходников (GitHub)
 
 ```bash
 git clone https://github.com/rkorablin/gitlab-http-api-mcp.git
-cd gitlab-http-api-mcp
-npm install
-```
-
-Self‑hosted GitLab:
-
-```bash
-git clone https://gitlab.greenworm.ru/ai/gitlab-http-api-mcp.git
 cd gitlab-http-api-mcp
 npm install
 ```
@@ -45,13 +35,13 @@ npm install -g gitlab-http-api-mcp
 
 ## Переменные окружения
 
-- `GITLAB_API_URL` — базовый URL API, например `https://gitlab.greenworm.ru/api/v4`
+- `GITLAB_API_URL` — базовый URL API, например `https://gitlab.example.com/api/v4`
 - `GITLAB_PERSONAL_ACCESS_TOKEN` — персональный токен доступа GitLab
 
 ## Запуск в режиме MCP (stdio)
 
 ```bash
-export GITLAB_API_URL="https://gitlab.greenworm.ru/api/v4"
+export GITLAB_API_URL="https://gitlab.example.com/api/v4"
 export GITLAB_PERSONAL_ACCESS_TOKEN="glpat-..."
 node server.mjs
 ```
@@ -67,7 +57,7 @@ node server.mjs
   "command": "node",
   "args": ["/absolute/path/to/gitlab-http-api-mcp/server.mjs"],
   "env": {
-    "GITLAB_API_URL": "https://gitlab.greenworm.ru/api/v4",
+    "GITLAB_API_URL": "https://gitlab.example.com/api/v4",
     "GITLAB_PERSONAL_ACCESS_TOKEN": "glpat-..."
   }
 }
@@ -81,7 +71,7 @@ node server.mjs
 "gitlab": {
   "command": "gitlab-http-api-mcp",
   "env": {
-    "GITLAB_API_URL": "https://gitlab.greenworm.ru/api/v4",
+    "GITLAB_API_URL": "https://gitlab.example.com/api/v4",
     "GITLAB_PERSONAL_ACCESS_TOKEN": "glpat-..."
   }
 }
@@ -94,7 +84,7 @@ node server.mjs
   "command": "npx",
   "args": ["-y", "gitlab-http-api-mcp"],
   "env": {
-    "GITLAB_API_URL": "https://gitlab.greenworm.ru/api/v4",
+    "GITLAB_API_URL": "https://gitlab.example.com/api/v4",
     "GITLAB_PERSONAL_ACCESS_TOKEN": "glpat-..."
   }
 }
