@@ -93,20 +93,3 @@ Or via `npx`:
   }
 }
 ```
-
-## Publishing (maintainers)
-
-This repo is pushed to two remotes:
-
-- **origin** (GitLab, private): branch `main` — full tree including `.cursor` and `ONBOARDING_PROMPT.md`.
-- **github** (GitHub, public): branch `main` on GitHub is fed from local branch `public` — same as `main` but without `.cursor` and `ONBOARDING_PROMPT.md`.
-
-**Push to GitLab:** `git push origin main`
-
-**Update GitHub (no .cursor, no ONBOARDING_PROMPT.md):** from repo root, after committing on `main`:
-
-```bash
-./scripts/sync-to-github.sh
-```
-
-This merges `main` into `public`, strips `.cursor` and `ONBOARDING_PROMPT.md`, and pushes `public` to `github` as `main`.

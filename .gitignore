@@ -5,3 +5,7 @@ node_modules/
 .env
 .env.local
 *.log
+
+# Local tooling, do not commit
+.cursor/
+.junie/
