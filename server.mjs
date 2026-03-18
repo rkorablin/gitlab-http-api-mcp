@@ -25,14 +25,37 @@ function authHeaders() {
   };
 }
 
+function projPath(id) {
+  return `/projects/${encodeURIComponent(String(id))}`;
+}
+
 async function glFetch(path, opts = {}) {
   const url = path.startsWith('http') ? path : `${baseApi}${path.startsWith('/') ? path : `/${path}`}`;
-  const res = await fetch(url, { ...opts, headers: { ...authHeaders(), ...(opts.headers || {}) } });
+  const res = await fetch(url, {
+    ...opts,
+    headers: { ...authHeaders(), ...(opts.headers || {}) }
+  });
   const text = await res.text();
   if (!res.ok) {
     throw new Error(`${res.status} ${res.statusText}: ${text.slice(0, 400)}`);
   }
-  return text ? JSON.parse(text) : null;
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
+/** Job log trace is plain text */
+async function glFetchText(path) {
+  const url = path.startsWith('http') ? path : `${baseApi}${path.startsWith('/') ? path : `/${path}`}`;
+  const res = await fetch(url, { headers: { 'Private-Token': token } });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`${res.status} ${res.statusText}: ${text.slice(0, 400)}`);
+  }
+  return text;
 }
 
 function jsonContent(value) {
@@ -44,24 +67,23 @@ function jsonContent(value) {
   ];
 }
 
+function encodeProjectId(projectId) {
+  return encodeURIComponent(String(projectId));
+}
+
 const server = new Server(
-  { name: 'gitlab-http-api-mcp', version: '0.1.0' },
+  { name: 'gitlab-http-api-mcp', version: '0.2.0' },
   { capabilities: { tools: {} } }
 );
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
-    // Basic info
     {
       name: 'gitlab_get_current_user',
       description: 'Get the current GitLab user (GET /user).',
-      inputSchema: {
-        type: 'object',
-        properties: {}
-      }
+      inputSchema: { type: 'object', properties: {} }
     },
 
-    // Projects / repositories
     {
       name: 'gitlab_list_projects',
       description:
@@ -81,11 +103,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             default: true
           },
           page: { type: 'number', description: 'Page number (1-based)', default: 1 },
-          per_page: {
-            type: 'number',
-            description: 'Items per page (max 100)',
-            default: 50
-          }
+          per_page: { type: 'number', description: 'Items per page (max 100)', default: 50 }
         }
       }
     },
@@ -104,7 +122,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       }
     },
 
-    // Issues
     {
       name: 'gitlab_list_issues',
       description:
@@ -112,22 +129,16 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: {
         type: 'object',
         properties: {
-          project_id: {
-            type: 'string',
-            description: 'Project ID or URL-encoded path (e.g. ai%2Fhome-network)'
-          },
+          project_id: { type: 'string', description: 'Project ID or URL-encoded path' },
           state: {
             type: 'string',
             description: 'Issue state: opened, closed, all',
             default: 'opened'
           },
           search: { type: 'string', description: 'Search term for title/description' },
-          labels: {
-            type: 'string',
-            description: 'Comma-separated list of labels to filter by'
-          },
-          page: { type: 'number', description: 'Page number (1-based)', default: 1 },
-          per_page: { type: 'number', description: 'Items per page (max 100)', default: 50 }
+          labels: { type: 'string', description: 'Comma-separated labels to filter by' },
+          page: { type: 'number', default: 1 },
+          per_page: { type: 'number', default: 50 }
         },
         required: ['project_id']
       }
@@ -138,14 +149,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: {
         type: 'object',
         properties: {
-          project_id: {
-            type: 'string',
-            description: 'Project ID or URL-encoded path'
-          },
-          issue_iid: {
-            type: 'number',
-            description: 'Issue internal ID (IID)'
-          }
+          project_id: { type: 'string' },
+          issue_iid: { type: 'number', description: 'Issue internal ID (IID)' }
         },
         required: ['project_id', 'issue_iid']
       }
@@ -156,46 +161,77 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: {
         type: 'object',
         properties: {
-          project_id: {
-            type: 'string',
-            description: 'Project ID or URL-encoded path'
-          },
-          title: { type: 'string', description: 'Issue title' },
-          description: {
-            type: 'string',
-            description: 'Issue description (Markdown)',
-            default: ''
-          },
-          labels: {
-            type: 'string',
-            description: 'Comma-separated labels',
-            default: ''
-          }
+          project_id: { type: 'string' },
+          title: { type: 'string' },
+          description: { type: 'string', default: '' },
+          labels: { type: 'string', default: '' }
         },
         required: ['project_id', 'title']
       }
     },
-
-    // Merge requests
     {
-      name: 'gitlab_list_merge_requests',
+      name: 'gitlab_update_issue',
       description:
-        'List merge requests for a project. Mirrors basic fields from GitLab MRs API (GET /projects/:id/merge_requests).',
+        'Update an issue (PUT /projects/:id/issues/:iid). Optional fields only — omit to leave unchanged.',
       inputSchema: {
         type: 'object',
         properties: {
-          project_id: {
+          project_id: { type: 'string' },
+          issue_iid: { type: 'number' },
+          title: { type: 'string' },
+          description: { type: 'string' },
+          state_event: {
             type: 'string',
-            description: 'Project ID or URL-encoded path'
+            description: 'Optional: close or reopen'
           },
+          labels: { type: 'string', description: 'Comma-separated labels (replaces set if provided)' }
+        },
+        required: ['project_id', 'issue_iid']
+      }
+    },
+    {
+      name: 'gitlab_list_issue_notes',
+      description: 'List comments/notes on an issue (GET /projects/:id/issues/:iid/notes).',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project_id: { type: 'string' },
+          issue_iid: { type: 'number' },
+          page: { type: 'number', default: 1 },
+          per_page: { type: 'number', default: 50 }
+        },
+        required: ['project_id', 'issue_iid']
+      }
+    },
+    {
+      name: 'gitlab_create_issue_note',
+      description: 'Add a comment to an issue (POST note).',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project_id: { type: 'string' },
+          issue_iid: { type: 'number' },
+          body: { type: 'string', description: 'Comment text (Markdown)' }
+        },
+        required: ['project_id', 'issue_iid', 'body']
+      }
+    },
+
+    {
+      name: 'gitlab_list_merge_requests',
+      description: 'List merge requests for a project.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project_id: { type: 'string' },
           state: {
             type: 'string',
-            description: 'MR state: opened, closed, merged, all',
+            description: 'opened, closed, merged, all',
             default: 'opened'
           },
-          search: { type: 'string', description: 'Search term for title' },
-          page: { type: 'number', description: 'Page number (1-based)', default: 1 },
-          per_page: { type: 'number', description: 'Items per page (max 100)', default: 50 }
+          search: { type: 'string' },
+          page: { type: 'number', default: 1 },
+          per_page: { type: 'number', default: 50 }
         },
         required: ['project_id']
       }
@@ -206,16 +242,217 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: {
         type: 'object',
         properties: {
-          project_id: {
+          project_id: { type: 'string' },
+          mr_iid: { type: 'number' }
+        },
+        required: ['project_id', 'mr_iid']
+      }
+    },
+    {
+      name: 'gitlab_create_merge_request',
+      description: 'Open a new MR (POST /projects/:id/merge_requests).',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project_id: { type: 'string' },
+          source_branch: { type: 'string' },
+          target_branch: { type: 'string' },
+          title: { type: 'string' },
+          description: { type: 'string', default: '' },
+          remove_source_branch: { type: 'boolean', description: 'Delete source branch after merge' },
+          draft: { type: 'boolean', description: 'Create as draft/WIP' }
+        },
+        required: ['project_id', 'source_branch', 'target_branch', 'title']
+      }
+    },
+    {
+      name: 'gitlab_update_merge_request',
+      description:
+        'Update MR metadata (PUT). Use state_event: close, reopen, or merge (merge may fail if not mergeable).',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project_id: { type: 'string' },
+          mr_iid: { type: 'number' },
+          title: { type: 'string' },
+          description: { type: 'string' },
+          target_branch: { type: 'string' },
+          state_event: {
             type: 'string',
-            description: 'Project ID or URL-encoded path'
-          },
-          mr_iid: {
-            type: 'number',
-            description: 'Merge request internal ID (IID)'
+            description: 'Optional: close, reopen, merge (prefer gitlab_merge_merge_request for merge)'
           }
         },
         required: ['project_id', 'mr_iid']
+      }
+    },
+    {
+      name: 'gitlab_merge_merge_request',
+      description:
+        'Merge an MR (PUT .../merge). Prefer this over state_event merge on update. Supports squash and delete source branch.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project_id: { type: 'string' },
+          mr_iid: { type: 'number' },
+          merge_commit_message: { type: 'string' },
+          squash_commit_message: { type: 'string' },
+          should_remove_source_branch: { type: 'boolean' },
+          squash: { type: 'boolean', description: 'Squash commits into one' },
+          merge_when_pipeline_succeeds: { type: 'boolean' }
+        },
+        required: ['project_id', 'mr_iid']
+      }
+    },
+    {
+      name: 'gitlab_get_merge_request_changes',
+      description:
+        'Get MR diffs per file (GET .../merge_requests/:iid/changes). Large; use for review.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project_id: { type: 'string' },
+          mr_iid: { type: 'number' },
+          max_diff_length: {
+            type: 'number',
+            description: 'Truncate each file diff to this many chars (0 = no truncate)',
+            default: 8000
+          }
+        },
+        required: ['project_id', 'mr_iid']
+      }
+    },
+
+    {
+      name: 'gitlab_list_pipelines',
+      description: 'List CI pipelines for a project (GET /projects/:id/pipelines).',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project_id: { type: 'string' },
+          ref: { type: 'string', description: 'Branch or tag name' },
+          status: {
+            type: 'string',
+            description: 'running, pending, success, failed, canceled, skipped, etc.'
+          },
+          sha: { type: 'string' },
+          page: { type: 'number', default: 1 },
+          per_page: { type: 'number', default: 20 }
+        },
+        required: ['project_id']
+      }
+    },
+    {
+      name: 'gitlab_get_pipeline',
+      description: 'Get one pipeline by numeric id.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project_id: { type: 'string' },
+          pipeline_id: { type: 'number' }
+        },
+        required: ['project_id', 'pipeline_id']
+      }
+    },
+    {
+      name: 'gitlab_create_pipeline',
+      description: 'Trigger a pipeline on a ref (POST /projects/:id/pipeline).',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project_id: { type: 'string' },
+          ref: { type: 'string', description: 'Branch or tag' },
+          variables: {
+            type: 'array',
+            description: 'CI variables: [{ key, value }]',
+            items: {
+              type: 'object',
+              properties: {
+                key: { type: 'string' },
+                value: { type: 'string' }
+              },
+              required: ['key', 'value']
+            }
+          }
+        },
+        required: ['project_id', 'ref']
+      }
+    },
+    {
+      name: 'gitlab_retry_pipeline',
+      description: 'Retry failed jobs in a pipeline.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project_id: { type: 'string' },
+          pipeline_id: { type: 'number' }
+        },
+        required: ['project_id', 'pipeline_id']
+      }
+    },
+    {
+      name: 'gitlab_cancel_pipeline',
+      description: 'Cancel a pipeline and its jobs.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project_id: { type: 'string' },
+          pipeline_id: { type: 'number' }
+        },
+        required: ['project_id', 'pipeline_id']
+      }
+    },
+    {
+      name: 'gitlab_list_pipeline_jobs',
+      description: 'List jobs for a pipeline.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project_id: { type: 'string' },
+          pipeline_id: { type: 'number' },
+          include_retried: { type: 'boolean', default: false }
+        },
+        required: ['project_id', 'pipeline_id']
+      }
+    },
+    {
+      name: 'gitlab_get_job_trace',
+      description: 'Download job log (plain text). Long logs are truncated from the start; tail is kept.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project_id: { type: 'string' },
+          job_id: { type: 'number' },
+          max_chars: {
+            type: 'number',
+            description: 'Max characters returned (tail preserved)',
+            default: 65536
+          }
+        },
+        required: ['project_id', 'job_id']
+      }
+    },
+    {
+      name: 'gitlab_retry_job',
+      description: 'Retry a single job.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project_id: { type: 'string' },
+          job_id: { type: 'number' }
+        },
+        required: ['project_id', 'job_id']
+      }
+    },
+    {
+      name: 'gitlab_play_job',
+      description: 'Run a manual job (when status is manual).',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project_id: { type: 'string' },
+          job_id: { type: 'number' }
+        },
+        required: ['project_id', 'job_id']
       }
     }
   ]
@@ -226,13 +463,11 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   const a = args || {};
 
   try {
-    // Basic info
     if (name === 'gitlab_get_current_user') {
       const data = await glFetch('/user');
       return { content: jsonContent(data) };
     }
 
-    // Projects
     if (name === 'gitlab_list_projects') {
       const page = Math.max(1, Number(a.page) || 1);
       const perPage = Math.max(1, Math.min(100, Number(a.per_page) || 50));
@@ -250,16 +485,13 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
     }
 
     if (name === 'gitlab_get_project') {
-      const id = a.id;
-      if (!id) throw new Error('id is required');
-      const data = await glFetch(`/projects/${encodeURIComponent(String(id))}`);
+      if (!a.id) throw new Error('id is required');
+      const data = await glFetch(`/projects/${encodeProjectId(a.id)}`);
       return { content: jsonContent(data) };
     }
 
-    // Issues
     if (name === 'gitlab_list_issues') {
-      const projectId = a.project_id;
-      if (!projectId) throw new Error('project_id is required');
+      if (!a.project_id) throw new Error('project_id is required');
       const page = Math.max(1, Number(a.page) || 1);
       const perPage = Math.max(1, Math.min(100, Number(a.per_page) || 50));
       const params = new URLSearchParams();
@@ -269,48 +501,84 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       if (a.search) params.set('search', String(a.search));
       if (a.labels) params.set('labels', String(a.labels));
       const data = await glFetch(
-        `/projects/${encodeURIComponent(String(projectId))}/issues?${params.toString()}`
+        `${projPath(a.project_id)}/issues?${params.toString()}`
       );
       return { content: jsonContent(Array.isArray(data) ? data : []) };
     }
 
     if (name === 'gitlab_get_issue') {
-      const projectId = a.project_id;
       const issueIid = Number(a.issue_iid);
-      if (!projectId || !Number.isFinite(issueIid)) {
+      if (!a.project_id || !Number.isFinite(issueIid)) {
         throw new Error('project_id and numeric issue_iid are required');
       }
-      const data = await glFetch(
-        `/projects/${encodeURIComponent(String(projectId))}/issues/${issueIid}`
-      );
+      const data = await glFetch(`${projPath(a.project_id)}/issues/${issueIid}`);
       return { content: jsonContent(data) };
     }
 
     if (name === 'gitlab_create_issue') {
-      const projectId = a.project_id;
-      const title = a.title;
-      if (!projectId || !title) {
-        throw new Error('project_id and title are required');
-      }
+      if (!a.project_id || !a.title) throw new Error('project_id and title are required');
       const body = {
-        title: String(title),
+        title: String(a.title),
         description: a.description != null ? String(a.description) : '',
         labels: a.labels != null ? String(a.labels) : undefined
       };
-      const data = await glFetch(
-        `/projects/${encodeURIComponent(String(projectId))}/issues`,
-        {
-          method: 'POST',
-          body: JSON.stringify(body)
-        }
-      );
+      const data = await glFetch(`${projPath(a.project_id)}/issues`, {
+        method: 'POST',
+        body: JSON.stringify(body)
+      });
       return { content: jsonContent(data) };
     }
 
-    // Merge requests
+    if (name === 'gitlab_update_issue') {
+      const issueIid = Number(a.issue_iid);
+      if (!a.project_id || !Number.isFinite(issueIid)) {
+        throw new Error('project_id and numeric issue_iid are required');
+      }
+      const body = {};
+      if (a.title != null) body.title = String(a.title);
+      if (a.description != null) body.description = String(a.description);
+      if (a.state_event) body.state_event = String(a.state_event);
+      if (a.labels != null) body.labels = String(a.labels);
+      if (Object.keys(body).length === 0) {
+        throw new Error('Provide at least one of: title, description, state_event, labels');
+      }
+      const data = await glFetch(`${projPath(a.project_id)}/issues/${issueIid}`, {
+        method: 'PUT',
+        body: JSON.stringify(body)
+      });
+      return { content: jsonContent(data) };
+    }
+
+    if (name === 'gitlab_list_issue_notes') {
+      const issueIid = Number(a.issue_iid);
+      if (!a.project_id || !Number.isFinite(issueIid)) {
+        throw new Error('project_id and numeric issue_iid are required');
+      }
+      const page = Math.max(1, Number(a.page) || 1);
+      const perPage = Math.max(1, Math.min(100, Number(a.per_page) || 50));
+      const params = new URLSearchParams();
+      params.set('page', String(page));
+      params.set('per_page', String(perPage));
+      const data = await glFetch(
+        `${projPath(a.project_id)}/issues/${issueIid}/notes?${params.toString()}`
+      );
+      return { content: jsonContent(Array.isArray(data) ? data : []) };
+    }
+
+    if (name === 'gitlab_create_issue_note') {
+      const issueIid = Number(a.issue_iid);
+      if (!a.project_id || !Number.isFinite(issueIid) || a.body == null) {
+        throw new Error('project_id, issue_iid, and body are required');
+      }
+      const data = await glFetch(`${projPath(a.project_id)}/issues/${issueIid}/notes`, {
+        method: 'POST',
+        body: JSON.stringify({ body: String(a.body) })
+      });
+      return { content: jsonContent(data) };
+    }
+
     if (name === 'gitlab_list_merge_requests') {
-      const projectId = a.project_id;
-      if (!projectId) throw new Error('project_id is required');
+      if (!a.project_id) throw new Error('project_id is required');
       const page = Math.max(1, Number(a.page) || 1);
       const perPage = Math.max(1, Math.min(100, Number(a.per_page) || 50));
       const params = new URLSearchParams();
@@ -319,20 +587,233 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       if (a.state) params.set('state', String(a.state));
       if (a.search) params.set('search', String(a.search));
       const data = await glFetch(
-        `/projects/${encodeURIComponent(String(projectId))}/merge_requests?${params.toString()}`
+        `${projPath(a.project_id)}/merge_requests?${params.toString()}`
       );
       return { content: jsonContent(Array.isArray(data) ? data : []) };
     }
 
     if (name === 'gitlab_get_merge_request') {
-      const projectId = a.project_id;
       const mrIid = Number(a.mr_iid);
-      if (!projectId || !Number.isFinite(mrIid)) {
+      if (!a.project_id || !Number.isFinite(mrIid)) {
         throw new Error('project_id and numeric mr_iid are required');
       }
+      const data = await glFetch(`${projPath(a.project_id)}/merge_requests/${mrIid}`);
+      return { content: jsonContent(data) };
+    }
+
+    if (name === 'gitlab_create_merge_request') {
+      if (!a.project_id || !a.source_branch || !a.target_branch || !a.title) {
+        throw new Error('project_id, source_branch, target_branch, title are required');
+      }
+      const body = {
+        source_branch: String(a.source_branch),
+        target_branch: String(a.target_branch),
+        title: String(a.title),
+        description: a.description != null ? String(a.description) : ''
+      };
+      if (a.remove_source_branch === true) body.remove_source_branch = true;
+      if (a.draft === true) body.draft = true;
+      const data = await glFetch(`${projPath(a.project_id)}/merge_requests`, {
+        method: 'POST',
+        body: JSON.stringify(body)
+      });
+      return { content: jsonContent(data) };
+    }
+
+    if (name === 'gitlab_update_merge_request') {
+      const mrIid = Number(a.mr_iid);
+      if (!a.project_id || !Number.isFinite(mrIid)) {
+        throw new Error('project_id and numeric mr_iid are required');
+      }
+      const body = {};
+      if (a.title != null) body.title = String(a.title);
+      if (a.description != null) body.description = String(a.description);
+      if (a.target_branch != null) body.target_branch = String(a.target_branch);
+      if (a.state_event) body.state_event = String(a.state_event);
+      if (Object.keys(body).length === 0) {
+        throw new Error('Provide at least one of: title, description, target_branch, state_event');
+      }
+      const data = await glFetch(`${projPath(a.project_id)}/merge_requests/${mrIid}`, {
+        method: 'PUT',
+        body: JSON.stringify(body)
+      });
+      return { content: jsonContent(data) };
+    }
+
+    if (name === 'gitlab_merge_merge_request') {
+      const mrIid = Number(a.mr_iid);
+      if (!a.project_id || !Number.isFinite(mrIid)) {
+        throw new Error('project_id and numeric mr_iid are required');
+      }
+      const body = {};
+      if (a.merge_commit_message != null) body.merge_commit_message = String(a.merge_commit_message);
+      if (a.squash_commit_message != null) {
+        body.squash_commit_message = String(a.squash_commit_message);
+      }
+      if (a.should_remove_source_branch === true) body.should_remove_source_branch = true;
+      if (a.squash === true) body.squash = true;
+      if (a.merge_when_pipeline_succeeds === true) {
+        body.merge_when_pipeline_succeeds = true;
+      }
       const data = await glFetch(
-        `/projects/${encodeURIComponent(String(projectId))}/merge_requests/${mrIid}`
+        `${projPath(a.project_id)}/merge_requests/${mrIid}/merge`,
+        {
+          method: 'PUT',
+          body: JSON.stringify(body)
+        }
       );
+      return { content: jsonContent(data) };
+    }
+
+    if (name === 'gitlab_get_merge_request_changes') {
+      const mrIid = Number(a.mr_iid);
+      if (!a.project_id || !Number.isFinite(mrIid)) {
+        throw new Error('project_id and numeric mr_iid are required');
+      }
+      const maxLen = Number(a.max_diff_length);
+      const cap = Number.isFinite(maxLen) && maxLen > 0 ? maxLen : 0;
+      const raw = await glFetch(`${projPath(a.project_id)}/merge_requests/${mrIid}/changes`);
+      if (!raw || typeof raw !== 'object') {
+        return { content: jsonContent(raw) };
+      }
+      const changes = Array.isArray(raw.changes) ? raw.changes : [];
+      const trimmed = changes.map((c) => {
+        const diff = c.diff;
+        if (cap && typeof diff === 'string' && diff.length > cap) {
+          return {
+            ...c,
+            diff: `… [truncated ${diff.length - cap} chars]\n` + diff.slice(-cap)
+          };
+        }
+        return c;
+      });
+      return {
+        content: jsonContent({
+          ...raw,
+          changes: trimmed,
+          _truncation_note: cap
+            ? `Each diff truncated to last ${cap} chars when longer`
+            : undefined
+        })
+      };
+    }
+
+    if (name === 'gitlab_list_pipelines') {
+      if (!a.project_id) throw new Error('project_id is required');
+      const page = Math.max(1, Number(a.page) || 1);
+      const perPage = Math.max(1, Math.min(100, Number(a.per_page) || 20));
+      const params = new URLSearchParams();
+      params.set('page', String(page));
+      params.set('per_page', String(perPage));
+      if (a.ref) params.set('ref', String(a.ref));
+      if (a.status) params.set('status', String(a.status));
+      if (a.sha) params.set('sha', String(a.sha));
+      const data = await glFetch(`${projPath(a.project_id)}/pipelines?${params.toString()}`);
+      return { content: jsonContent(Array.isArray(data) ? data : []) };
+    }
+
+    if (name === 'gitlab_get_pipeline') {
+      const pipelineId = Number(a.pipeline_id);
+      if (!a.project_id || !Number.isFinite(pipelineId)) {
+        throw new Error('project_id and numeric pipeline_id are required');
+      }
+      const data = await glFetch(`${projPath(a.project_id)}/pipelines/${pipelineId}`);
+      return { content: jsonContent(data) };
+    }
+
+    if (name === 'gitlab_create_pipeline') {
+      if (!a.project_id || !a.ref) throw new Error('project_id and ref are required');
+      const body = { ref: String(a.ref) };
+      if (Array.isArray(a.variables) && a.variables.length > 0) {
+        body.variables = a.variables.map((v) => ({
+          key: String(v.key),
+          value: String(v.value)
+        }));
+      }
+      const data = await glFetch(`${projPath(a.project_id)}/pipeline`, {
+        method: 'POST',
+        body: JSON.stringify(body)
+      });
+      return { content: jsonContent(data) };
+    }
+
+    if (name === 'gitlab_retry_pipeline') {
+      const pipelineId = Number(a.pipeline_id);
+      if (!a.project_id || !Number.isFinite(pipelineId)) {
+        throw new Error('project_id and numeric pipeline_id are required');
+      }
+      const data = await glFetch(
+        `${projPath(a.project_id)}/pipelines/${pipelineId}/retry`,
+        { method: 'POST', body: '{}' }
+      );
+      return { content: jsonContent(data) };
+    }
+
+    if (name === 'gitlab_cancel_pipeline') {
+      const pipelineId = Number(a.pipeline_id);
+      if (!a.project_id || !Number.isFinite(pipelineId)) {
+        throw new Error('project_id and numeric pipeline_id are required');
+      }
+      const data = await glFetch(
+        `${projPath(a.project_id)}/pipelines/${pipelineId}/cancel`,
+        { method: 'POST', body: '{}' }
+      );
+      return { content: jsonContent(data) };
+    }
+
+    if (name === 'gitlab_list_pipeline_jobs') {
+      const pipelineId = Number(a.pipeline_id);
+      if (!a.project_id || !Number.isFinite(pipelineId)) {
+        throw new Error('project_id and numeric pipeline_id are required');
+      }
+      const params = new URLSearchParams();
+      if (a.include_retried === true) params.set('include_retried', 'true');
+      const q = params.toString();
+      const data = await glFetch(
+        `${projPath(a.project_id)}/pipelines/${pipelineId}/jobs${q ? `?${q}` : ''}`
+      );
+      return { content: jsonContent(Array.isArray(data) ? data : []) };
+    }
+
+    if (name === 'gitlab_get_job_trace') {
+      const jobId = Number(a.job_id);
+      if (!a.project_id || !Number.isFinite(jobId)) {
+        throw new Error('project_id and numeric job_id are required');
+      }
+      const maxChars = Math.max(4096, Math.min(512000, Number(a.max_chars) || 65536));
+      const fullTrace = await glFetchText(`${projPath(a.project_id)}/jobs/${jobId}/trace`);
+      const total = fullTrace.length;
+      let trace = fullTrace;
+      let note = '';
+      if (total > maxChars) {
+        const omitted = total - maxChars;
+        trace = `… [${omitted} characters omitted from start of log]\n\n` + fullTrace.slice(-maxChars);
+        note = `Returned last ${maxChars} chars of ${total} total.`;
+      }
+      return { content: jsonContent(note ? { _note: note, trace } : trace) };
+    }
+
+    if (name === 'gitlab_retry_job') {
+      const jobId = Number(a.job_id);
+      if (!a.project_id || !Number.isFinite(jobId)) {
+        throw new Error('project_id and numeric job_id are required');
+      }
+      const data = await glFetch(`${projPath(a.project_id)}/jobs/${jobId}/retry`, {
+        method: 'POST',
+        body: '{}'
+      });
+      return { content: jsonContent(data) };
+    }
+
+    if (name === 'gitlab_play_job') {
+      const jobId = Number(a.job_id);
+      if (!a.project_id || !Number.isFinite(jobId)) {
+        throw new Error('project_id and numeric job_id are required');
+      }
+      const data = await glFetch(`${projPath(a.project_id)}/jobs/${jobId}/play`, {
+        method: 'POST',
+        body: '{}'
+      });
       return { content: jsonContent(data) };
     }
 
@@ -345,4 +826,3 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
-

@@ -1,7 +1,7 @@
 {
   "name": "gitlab-http-api-mcp",
-  "version": "0.1.0",
-  "description": "MCP server for GitLab over HTTP API (projects, issues, merge requests)",
+  "version": "0.2.0",
+  "description": "MCP server for GitLab over HTTP API (projects, issues, MRs, CI pipelines, jobs)",
   "type": "module",
   "main": "server.mjs",
   "bin": {
@@ -26,6 +26,8 @@
     "projects",
     "issues",
     "merge-requests",
+    "pipelines",
+    "ci",
     "http-api"
   ],
   "dependencies": {
