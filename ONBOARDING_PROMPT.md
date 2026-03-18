@@ -20,3 +20,7 @@ ONBOARDING: custom GitLab MCP over HTTP API
 
 Расширять функциональность лучше небольшими, хорошо описанными инструментами
 поверх HTTP API GitLab (см. официальную документацию GitLab API).
+
+MCP через npx: в `mcp.json` использовать
+`"args": ["--yes", "--prefer-online", "gitlab-http-api-mcp@latest"]`, чтобы при
+перезапуске клиента подтягивалась свежая версия с npm.

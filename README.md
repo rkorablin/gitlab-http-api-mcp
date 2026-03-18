@@ -81,18 +81,20 @@ If installed globally:
 }
 ```
 
-Or via `npx`:
+Or via `npx` (рекомендуется для автоподтягивания новых версий):
 
 ```json
 "gitlab": {
   "command": "npx",
-  "args": ["-y", "gitlab-http-api-mcp"],
+  "args": ["--yes", "--prefer-online", "gitlab-http-api-mcp@latest"],
   "env": {
     "GITLAB_API_URL": "https://gitlab.example.com/api/v4",
     "GITLAB_PERSONAL_ACCESS_TOKEN": "glpat-..."
   }
 }
 ```
+
+**Почему `@latest` и `--prefer-online`:** без тега версии npx может долго использовать старый кэш. Явный `@latest` + опрос registry при старте даёт актуальный патч после публикации в npm. Флаги нужно передавать **до** имени пакета (см. `npm help npx`).
 
 ## Tools (summary)
 

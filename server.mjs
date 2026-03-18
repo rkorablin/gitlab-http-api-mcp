@@ -72,7 +72,7 @@ function encodeProjectId(projectId) {
 }
 
 const server = new Server(
-  { name: 'gitlab-http-api-mcp', version: '0.2.0' },
+  { name: 'gitlab-http-api-mcp', version: '0.2.1' },
   { capabilities: { tools: {} } }
 );
 
