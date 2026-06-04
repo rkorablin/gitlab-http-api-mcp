@@ -72,7 +72,7 @@ function encodeProjectId(projectId) {
 }
 
 const server = new Server(
-  { name: 'gitlab-http-api-mcp', version: '0.2.1' },
+  { name: 'gitlab-http-api-mcp', version: '0.2.2' },
   { capabilities: { tools: {} } }
 );
 
@@ -317,6 +317,42 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             description: 'Truncate each file diff to this many chars (0 = no truncate)',
             default: 8000
           }
+        },
+        required: ['project_id', 'mr_iid']
+      }
+    },
+    {
+      name: 'gitlab_list_merge_request_notes',
+      description:
+        'List MR comments/notes, flat chronological list (GET .../merge_requests/:iid/notes). Includes system notes.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project_id: { type: 'string' },
+          mr_iid: { type: 'number', description: 'Merge request IID' },
+          page: { type: 'number', default: 1 },
+          per_page: { type: 'number', default: 50 },
+          sort: { type: 'string', description: 'asc or desc', default: 'desc' },
+          order_by: {
+            type: 'string',
+            description: 'created_at or updated_at',
+            default: 'created_at'
+          }
+        },
+        required: ['project_id', 'mr_iid']
+      }
+    },
+    {
+      name: 'gitlab_list_merge_request_discussions',
+      description:
+        'List MR discussions (threads with replies and diff line comments). GET .../merge_requests/:iid/discussions. Prefer over notes for code review.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project_id: { type: 'string' },
+          mr_iid: { type: 'number', description: 'Merge request IID' },
+          page: { type: 'number', default: 1 },
+          per_page: { type: 'number', default: 20 }
         },
         required: ['project_id', 'mr_iid']
       }
@@ -696,6 +732,40 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
             : undefined
         })
       };
+    }
+
+    if (name === 'gitlab_list_merge_request_notes') {
+      const mrIid = Number(a.mr_iid);
+      if (!a.project_id || !Number.isFinite(mrIid)) {
+        throw new Error('project_id and numeric mr_iid are required');
+      }
+      const page = Math.max(1, Number(a.page) || 1);
+      const perPage = Math.max(1, Math.min(100, Number(a.per_page) || 50));
+      const params = new URLSearchParams();
+      params.set('page', String(page));
+      params.set('per_page', String(perPage));
+      if (a.sort) params.set('sort', String(a.sort));
+      if (a.order_by) params.set('order_by', String(a.order_by));
+      const data = await glFetch(
+        `${projPath(a.project_id)}/merge_requests/${mrIid}/notes?${params.toString()}`
+      );
+      return { content: jsonContent(Array.isArray(data) ? data : []) };
+    }
+
+    if (name === 'gitlab_list_merge_request_discussions') {
+      const mrIid = Number(a.mr_iid);
+      if (!a.project_id || !Number.isFinite(mrIid)) {
+        throw new Error('project_id and numeric mr_iid are required');
+      }
+      const page = Math.max(1, Number(a.page) || 1);
+      const perPage = Math.max(1, Math.min(100, Number(a.per_page) || 20));
+      const params = new URLSearchParams();
+      params.set('page', String(page));
+      params.set('per_page', String(perPage));
+      const data = await glFetch(
+        `${projPath(a.project_id)}/merge_requests/${mrIid}/discussions?${params.toString()}`
+      );
+      return { content: jsonContent(Array.isArray(data) ? data : []) };
     }
 
     if (name === 'gitlab_list_pipelines') {

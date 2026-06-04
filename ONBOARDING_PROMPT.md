@@ -12,7 +12,8 @@ ONBOARDING: custom GitLab MCP over HTTP API
   `gitlab_update_issue`, `gitlab_list_issue_notes`, `gitlab_create_issue_note`
 - **Merge requests:** `gitlab_list_merge_requests`, `gitlab_get_merge_request`,
   `gitlab_create_merge_request`, `gitlab_update_merge_request`,
-  `gitlab_merge_merge_request`, `gitlab_get_merge_request_changes`
+  `gitlab_merge_merge_request`, `gitlab_get_merge_request_changes`,
+  `gitlab_list_merge_request_notes`, `gitlab_list_merge_request_discussions`
 - **CI/CD:** `gitlab_list_pipelines`, `gitlab_get_pipeline`,
   `gitlab_create_pipeline`, `gitlab_retry_pipeline`, `gitlab_cancel_pipeline`,
   `gitlab_list_pipeline_jobs`, `gitlab_get_job_trace`, `gitlab_retry_job`,
