@@ -72,7 +72,7 @@ function encodeProjectId(projectId) {
 }
 
 const server = new Server(
-  { name: 'gitlab-http-api-mcp', version: '0.2.2' },
+  { name: 'gitlab-http-api-mcp', version: '0.2.3' },
   { capabilities: { tools: {} } }
 );
 
@@ -119,6 +119,59 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           }
         },
         required: ['id']
+      }
+    },
+    {
+      name: 'gitlab_update_project',
+      description:
+        'Update a project (PUT /projects/:id). Optional fields only — omit to leave unchanged. At least one of default_branch, description, name required. Branch for default_branch must already exist.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: {
+            type: 'string',
+            description: 'Project ID or path (e.g. ai/gitlab-http-api-mcp)'
+          },
+          default_branch: {
+            type: 'string',
+            description: 'New default branch name (must already exist in the repository)'
+          },
+          description: { type: 'string', description: 'Project description' },
+          name: { type: 'string', description: 'Project name (use carefully)' }
+        },
+        required: ['id']
+      }
+    },
+    {
+      name: 'gitlab_create_repository_branch',
+      description:
+        'Create a repository branch (POST /projects/:id/repository/branches). Fails if the branch already exists.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project_id: { type: 'string', description: 'Project ID or path' },
+          branch: { type: 'string', description: 'Name of the new branch' },
+          ref: {
+            type: 'string',
+            description: 'Source branch name, tag, or commit SHA'
+          }
+        },
+        required: ['project_id', 'branch', 'ref']
+      }
+    },
+    {
+      name: 'gitlab_list_repository_branches',
+      description:
+        'List repository branches (GET /projects/:id/repository/branches). Optional search and pagination.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project_id: { type: 'string', description: 'Project ID or path' },
+          search: { type: 'string', description: 'Filter branches by name' },
+          page: { type: 'number', default: 1 },
+          per_page: { type: 'number', default: 50 }
+        },
+        required: ['project_id']
       }
     },
 
@@ -524,6 +577,50 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       if (!a.id) throw new Error('id is required');
       const data = await glFetch(`/projects/${encodeProjectId(a.id)}`);
       return { content: jsonContent(data) };
+    }
+
+    if (name === 'gitlab_update_project') {
+      if (!a.id) throw new Error('id is required');
+      const body = {};
+      if (a.default_branch != null) body.default_branch = String(a.default_branch);
+      if (a.description != null) body.description = String(a.description);
+      if (a.name != null) body.name = String(a.name);
+      if (Object.keys(body).length === 0) {
+        throw new Error('Provide at least one of: default_branch, description, name');
+      }
+      const data = await glFetch(`/projects/${encodeProjectId(a.id)}`, {
+        method: 'PUT',
+        body: JSON.stringify(body)
+      });
+      return { content: jsonContent(data) };
+    }
+
+    if (name === 'gitlab_create_repository_branch') {
+      if (!a.project_id || !a.branch || !a.ref) {
+        throw new Error('project_id, branch, and ref are required');
+      }
+      const params = new URLSearchParams();
+      params.set('branch', String(a.branch));
+      params.set('ref', String(a.ref));
+      const data = await glFetch(
+        `${projPath(a.project_id)}/repository/branches?${params.toString()}`,
+        { method: 'POST' }
+      );
+      return { content: jsonContent(data) };
+    }
+
+    if (name === 'gitlab_list_repository_branches') {
+      if (!a.project_id) throw new Error('project_id is required');
+      const page = Math.max(1, Number(a.page) || 1);
+      const perPage = Math.max(1, Math.min(100, Number(a.per_page) || 50));
+      const params = new URLSearchParams();
+      params.set('page', String(page));
+      params.set('per_page', String(perPage));
+      if (a.search) params.set('search', String(a.search));
+      const data = await glFetch(
+        `${projPath(a.project_id)}/repository/branches?${params.toString()}`
+      );
+      return { content: jsonContent(Array.isArray(data) ? data : []) };
     }
 
     if (name === 'gitlab_list_issues') {

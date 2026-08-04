@@ -1,8 +1,9 @@
 # gitlab-http-api-mcp
 
 MCP (Model Context Protocol) server for **GitLab** that talks directly to the GitLab HTTP API
-using `GITLAB_API_URL` and `GITLAB_PERSONAL_ACCESS_TOKEN`. Tools cover projects, issues
-(including notes), merge requests (create/update/merge/diffs), and CI pipelines & jobs.
+using `GITLAB_API_URL` and `GITLAB_PERSONAL_ACCESS_TOKEN`. Tools cover projects (including
+default branch updates), repository branches, issues (including notes), merge requests
+(create/update/merge/diffs), and CI pipelines & jobs.
 
 ## Requirements
 
@@ -101,7 +102,8 @@ Or via `npx` (рекомендуется для автоподтягивания
 | Area | Tools |
 |------|--------|
 | User | `gitlab_get_current_user` |
-| Projects | `gitlab_list_projects`, `gitlab_get_project` |
+| Projects | `gitlab_list_projects`, `gitlab_get_project`, `gitlab_update_project` |
+| Branches | `gitlab_list_repository_branches`, `gitlab_create_repository_branch` |
 | Issues | `gitlab_list_issues`, `gitlab_get_issue`, `gitlab_create_issue`, `gitlab_update_issue`, `gitlab_list_issue_notes`, `gitlab_create_issue_note` |
 | Merge requests | `gitlab_list_merge_requests`, `gitlab_get_merge_request`, `gitlab_create_merge_request`, `gitlab_update_merge_request`, `gitlab_merge_merge_request`, `gitlab_get_merge_request_changes`, `gitlab_list_merge_request_notes`, `gitlab_list_merge_request_discussions` |
 | Pipelines | `gitlab_list_pipelines`, `gitlab_get_pipeline`, `gitlab_create_pipeline`, `gitlab_retry_pipeline`, `gitlab_cancel_pipeline` |

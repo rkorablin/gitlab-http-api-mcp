@@ -7,7 +7,10 @@ ONBOARDING: custom GitLab MCP over HTTP API
 Ключевые команды:
 
 - `gitlab_get_current_user` — пользователь / токен
-- `gitlab_list_projects` / `gitlab_get_project` — проекты
+- `gitlab_list_projects` / `gitlab_get_project` / `gitlab_update_project` — проекты
+  (в т.ч. смена `default_branch`)
+- `gitlab_list_repository_branches` / `gitlab_create_repository_branch` — ветки
+  репозитория (создать из `ref`, если ещё нет — перед сменой default)
 - **Issues:** `gitlab_list_issues`, `gitlab_get_issue`, `gitlab_create_issue`,
   `gitlab_update_issue`, `gitlab_list_issue_notes`, `gitlab_create_issue_note`
 - **Merge requests:** `gitlab_list_merge_requests`, `gitlab_get_merge_request`,
