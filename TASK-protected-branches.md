@@ -1,6 +1,6 @@
 # Постановка: protected branches API
 
-> **Статус:** выполнено (tools + docs + smoke; publish — по запросу).  
+> **Статус:** выполнено (tools + docs + smoke; published v0.2.4).  
 > **Не** коммитить в `cubekit-v2-common-general`.  
 > **Контекст потребителя:** Cubekit v2 branch policy v1 — non-lib: protect `develop`, не protect `main`; lib: protect `main`. Сейчас агент ходит в Shell/`glab`; нужен MCP.
 
