@@ -72,7 +72,7 @@ function encodeProjectId(projectId) {
 }
 
 const server = new Server(
-  { name: 'gitlab-http-api-mcp', version: '0.2.3' },
+  { name: 'gitlab-http-api-mcp', version: '0.2.4' },
   { capabilities: { tools: {} } }
 );
 
@@ -172,6 +172,67 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           per_page: { type: 'number', default: 50 }
         },
         required: ['project_id']
+      }
+    },
+    {
+      name: 'gitlab_list_protected_branches',
+      description:
+        'List protected branches (GET /projects/:id/protected_branches). Optional name search.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project_id: { type: 'string', description: 'Project ID or path' },
+          search: { type: 'string', description: 'Filter protected branches by name' }
+        },
+        required: ['project_id']
+      }
+    },
+    {
+      name: 'gitlab_protect_branch',
+      description:
+        'Protect a repository branch (POST /projects/:id/protected_branches). Fails if already protected. Access levels: 0=No one, 30=Developers+Maintainers, 40=Maintainers (default).',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project_id: { type: 'string', description: 'Project ID or path' },
+          name: {
+            type: 'string',
+            description: 'Branch name or wildcard (e.g. develop, main, release/*)'
+          },
+          push_access_level: {
+            type: 'number',
+            description: 'Who can push (default 40 Maintainers)',
+            default: 40
+          },
+          merge_access_level: {
+            type: 'number',
+            description: 'Who can merge (default 40 Maintainers)',
+            default: 40
+          },
+          allow_force_push: {
+            type: 'boolean',
+            description: 'Allow force push (default false)',
+            default: false
+          },
+          code_owner_approval_required: {
+            type: 'boolean',
+            description: 'Require code owner approval (if instance supports it)'
+          }
+        },
+        required: ['project_id', 'name']
+      }
+    },
+    {
+      name: 'gitlab_unprotect_branch',
+      description:
+        'Unprotect a repository branch (DELETE /projects/:id/protected_branches/:name). Returns { ok: true, name } on success.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project_id: { type: 'string', description: 'Project ID or path' },
+          name: { type: 'string', description: 'Protected branch name to remove' }
+        },
+        required: ['project_id', 'name']
       }
     },
 
@@ -621,6 +682,60 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         `${projPath(a.project_id)}/repository/branches?${params.toString()}`
       );
       return { content: jsonContent(Array.isArray(data) ? data : []) };
+    }
+
+    if (name === 'gitlab_list_protected_branches') {
+      if (!a.project_id) throw new Error('project_id is required');
+      const params = new URLSearchParams();
+      if (a.search) params.set('search', String(a.search));
+      const q = params.toString();
+      const data = await glFetch(
+        `${projPath(a.project_id)}/protected_branches${q ? `?${q}` : ''}`
+      );
+      return { content: jsonContent(Array.isArray(data) ? data : []) };
+    }
+
+    if (name === 'gitlab_protect_branch') {
+      if (!a.project_id || !a.name) {
+        throw new Error('project_id and name are required');
+      }
+      const params = new URLSearchParams();
+      params.set('name', String(a.name));
+      const pushLevel =
+        a.push_access_level != null ? Number(a.push_access_level) : 40;
+      const mergeLevel =
+        a.merge_access_level != null ? Number(a.merge_access_level) : 40;
+      if (!Number.isFinite(pushLevel) || !Number.isFinite(mergeLevel)) {
+        throw new Error('push_access_level and merge_access_level must be numbers');
+      }
+      params.set('push_access_level', String(pushLevel));
+      params.set('merge_access_level', String(mergeLevel));
+      const allowForce =
+        typeof a.allow_force_push === 'boolean' ? a.allow_force_push : false;
+      params.set('allow_force_push', allowForce ? 'true' : 'false');
+      if (typeof a.code_owner_approval_required === 'boolean') {
+        params.set(
+          'code_owner_approval_required',
+          a.code_owner_approval_required ? 'true' : 'false'
+        );
+      }
+      const data = await glFetch(
+        `${projPath(a.project_id)}/protected_branches?${params.toString()}`,
+        { method: 'POST' }
+      );
+      return { content: jsonContent(data) };
+    }
+
+    if (name === 'gitlab_unprotect_branch') {
+      if (!a.project_id || !a.name) {
+        throw new Error('project_id and name are required');
+      }
+      const branchName = String(a.name);
+      await glFetch(
+        `${projPath(a.project_id)}/protected_branches/${encodeURIComponent(branchName)}`,
+        { method: 'DELETE' }
+      );
+      return { content: jsonContent({ ok: true, name: branchName }) };
     }
 
     if (name === 'gitlab_list_issues') {

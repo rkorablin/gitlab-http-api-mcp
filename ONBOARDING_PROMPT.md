@@ -11,6 +11,8 @@ ONBOARDING: custom GitLab MCP over HTTP API
   (в т.ч. смена `default_branch`)
 - `gitlab_list_repository_branches` / `gitlab_create_repository_branch` — ветки
   репозитория (создать из `ref`, если ещё нет — перед сменой default)
+- `gitlab_list_protected_branches` / `gitlab_protect_branch` /
+  `gitlab_unprotect_branch` — protected branches (audit / protect / unprotect)
 - **Issues:** `gitlab_list_issues`, `gitlab_get_issue`, `gitlab_create_issue`,
   `gitlab_update_issue`, `gitlab_list_issue_notes`, `gitlab_create_issue_note`
 - **Merge requests:** `gitlab_list_merge_requests`, `gitlab_get_merge_request`,
