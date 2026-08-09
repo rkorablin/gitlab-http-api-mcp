@@ -13,6 +13,13 @@ ONBOARDING: custom GitLab MCP over HTTP API
   репозитория (создать из `ref`, если ещё нет — перед сменой default)
 - `gitlab_list_protected_branches` / `gitlab_protect_branch` /
   `gitlab_unprotect_branch` — protected branches (audit / protect / unprotect)
+- **Job token scope / inbound allowlist:** `gitlab_get_job_token_scope`,
+  `gitlab_list_job_token_allowlist`, `gitlab_add_job_token_allowlist`,
+  `gitlab_remove_job_token_allowlist`, плюс groups: `…_groups_allowlist`
+  (add/list/remove). `target_*_id` — id или path (path → resolve). Add/remove
+  **idempotent** (`already_present` / `already_absent`). Типичный Cubekit:
+  на deployable разрешить `common/…-system-tests` тянуть registry через
+  `CI_JOB_TOKEN`.
 - **Issues:** `gitlab_list_issues`, `gitlab_get_issue`, `gitlab_create_issue`,
   `gitlab_update_issue`, `gitlab_list_issue_notes`, `gitlab_create_issue_note`
 - **Merge requests:** `gitlab_list_merge_requests`, `gitlab_get_merge_request`,

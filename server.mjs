@@ -29,6 +29,15 @@ function projPath(id) {
   return `/projects/${encodeURIComponent(String(id))}`;
 }
 
+function parseBody(text) {
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
 async function glFetch(path, opts = {}) {
   const url = path.startsWith('http') ? path : `${baseApi}${path.startsWith('/') ? path : `/${path}`}`;
   const res = await fetch(url, {
@@ -39,12 +48,91 @@ async function glFetch(path, opts = {}) {
   if (!res.ok) {
     throw new Error(`${res.status} ${res.statusText}: ${text.slice(0, 400)}`);
   }
-  if (!text) return null;
-  try {
-    return JSON.parse(text);
-  } catch {
-    return text;
+  return parseBody(text);
+}
+
+/** Like glFetch, but returns { status, data } and does not throw for allowStatuses. */
+async function glFetchStatus(path, opts = {}, allowStatuses = []) {
+  const url = path.startsWith('http') ? path : `${baseApi}${path.startsWith('/') ? path : `/${path}`}`;
+  const res = await fetch(url, {
+    ...opts,
+    headers: { ...authHeaders(), ...(opts.headers || {}) }
+  });
+  const text = await res.text();
+  if (!res.ok && !allowStatuses.includes(res.status)) {
+    throw new Error(`${res.status} ${res.statusText}: ${text.slice(0, 400)}`);
   }
+  return { status: res.status, data: parseBody(text) };
+}
+
+function isNumericId(value) {
+  const s = String(value).trim();
+  if (!/^\d+$/.test(s)) return false;
+  const n = Number(s);
+  return Number.isFinite(n);
+}
+
+/** Resolve project ID or path → numeric id. */
+async function resolveProjectNumericId(idOrPath) {
+  if (idOrPath == null || idOrPath === '') {
+    throw new Error('project id/path is required');
+  }
+  if (isNumericId(idOrPath)) return Number(String(idOrPath).trim());
+  const data = await glFetch(`/projects/${encodeProjectId(idOrPath)}`);
+  if (!data || data.id == null) {
+    throw new Error(`Could not resolve project: ${idOrPath}`);
+  }
+  return Number(data.id);
+}
+
+/** Resolve group ID or path → numeric id. */
+async function resolveGroupNumericId(idOrPath) {
+  if (idOrPath == null || idOrPath === '') {
+    throw new Error('group id/path is required');
+  }
+  if (isNumericId(idOrPath)) return Number(String(idOrPath).trim());
+  const data = await glFetch(`/groups/${encodeURIComponent(String(idOrPath))}`);
+  if (!data || data.id == null) {
+    throw new Error(`Could not resolve group: ${idOrPath}`);
+  }
+  return Number(data.id);
+}
+
+function summarizeApiError(data) {
+  if (data == null) return '';
+  if (typeof data === 'string') return data.slice(0, 400);
+  if (typeof data === 'object') {
+    if (data.message != null) return String(data.message).slice(0, 400);
+    if (data.error != null) return String(data.error).slice(0, 400);
+    try {
+      return JSON.stringify(data).slice(0, 400);
+    } catch {
+      return String(data);
+    }
+  }
+  return String(data);
+}
+
+/** GitLab often returns 400 (not 409) when the allowlist entry already exists. */
+function isAlreadyPresentAllowlistError(status, data, kind) {
+  if (status !== 400 && status !== 409) return false;
+  const msg = summarizeApiError(data).toLowerCase();
+  if (status === 409) return true;
+  if (kind === 'group') {
+    return msg.includes('already in the job token allowlist') || msg.includes('already');
+  }
+  return msg.includes('already in the job token allowlist') || msg.includes('already');
+}
+
+/** GitLab often returns 400 (not 404) when the allowlist entry is missing. */
+function isAlreadyAbsentAllowlistError(status, data, kind) {
+  if (status === 404) return true;
+  if (status !== 400) return false;
+  const msg = summarizeApiError(data).toLowerCase();
+  if (kind === 'group') {
+    return msg.includes('not in the job token scope') || msg.includes('not found');
+  }
+  return msg.includes('not in the job token scope') || msg.includes('not found');
 }
 
 /** Job log trace is plain text */
@@ -72,7 +160,7 @@ function encodeProjectId(projectId) {
 }
 
 const server = new Server(
-  { name: 'gitlab-http-api-mcp', version: '0.2.4' },
+  { name: 'gitlab-http-api-mcp', version: '0.2.5' },
   { capabilities: { tools: {} } }
 );
 
@@ -604,6 +692,133 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         required: ['project_id', 'job_id']
       }
+    },
+
+    {
+      name: 'gitlab_get_job_token_scope',
+      description:
+        'Get CI job token scope settings (GET /projects/:id/job_token_scope). Returns inbound_enabled / outbound_enabled.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project_id: {
+            type: 'string',
+            description: 'Target project ID or path (the project that receives job-token access)'
+          }
+        },
+        required: ['project_id']
+      }
+    },
+    {
+      name: 'gitlab_list_job_token_allowlist',
+      description:
+        'List inbound CI job token project allowlist (GET .../job_token_scope/allowlist). Listed projects may use their CI_JOB_TOKEN to access project_id.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project_id: {
+            type: 'string',
+            description: 'Allowlist owner project ID or path (deployable / registry project)'
+          },
+          page: { type: 'number', default: 1 },
+          per_page: { type: 'number', default: 50 }
+        },
+        required: ['project_id']
+      }
+    },
+    {
+      name: 'gitlab_add_job_token_allowlist',
+      description:
+        'Add a project to inbound CI job token allowlist (POST .../allowlist). target_project_id may be numeric id or path (path is resolved). Idempotent: already present → { already_present: true }.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project_id: {
+            type: 'string',
+            description: 'Allowlist owner project ID or path'
+          },
+          target_project_id: {
+            description:
+              'Source project whose CI_JOB_TOKEN will be allowed (numeric id or path)',
+            oneOf: [{ type: 'number' }, { type: 'string' }]
+          }
+        },
+        required: ['project_id', 'target_project_id']
+      }
+    },
+    {
+      name: 'gitlab_remove_job_token_allowlist',
+      description:
+        'Remove a project from inbound CI job token allowlist (DELETE .../allowlist/:target_project_id). target_project_id may be id or path. Idempotent: missing entry → { ok: true, already_absent: true }.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project_id: {
+            type: 'string',
+            description: 'Allowlist owner project ID or path'
+          },
+          target_project_id: {
+            description: 'Source project to remove (numeric id or path)',
+            oneOf: [{ type: 'number' }, { type: 'string' }]
+          }
+        },
+        required: ['project_id', 'target_project_id']
+      }
+    },
+    {
+      name: 'gitlab_list_job_token_groups_allowlist',
+      description:
+        'List inbound CI job token groups allowlist (GET .../job_token_scope/groups_allowlist).',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project_id: {
+            type: 'string',
+            description: 'Allowlist owner project ID or path'
+          },
+          page: { type: 'number', default: 1 },
+          per_page: { type: 'number', default: 50 }
+        },
+        required: ['project_id']
+      }
+    },
+    {
+      name: 'gitlab_add_job_token_groups_allowlist',
+      description:
+        'Add a group to inbound CI job token groups allowlist (POST .../groups_allowlist). target_group_id may be numeric id or path. Idempotent if already present.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project_id: {
+            type: 'string',
+            description: 'Allowlist owner project ID or path'
+          },
+          target_group_id: {
+            description: 'Group to allow (numeric id or path)',
+            oneOf: [{ type: 'number' }, { type: 'string' }]
+          }
+        },
+        required: ['project_id', 'target_group_id']
+      }
+    },
+    {
+      name: 'gitlab_remove_job_token_groups_allowlist',
+      description:
+        'Remove a group from inbound CI job token groups allowlist (DELETE .../groups_allowlist/:target_group_id). Idempotent if already absent.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project_id: {
+            type: 'string',
+            description: 'Allowlist owner project ID or path'
+          },
+          target_group_id: {
+            description: 'Group to remove (numeric id or path)',
+            oneOf: [{ type: 'number' }, { type: 'string' }]
+          }
+        },
+        required: ['project_id', 'target_group_id']
+      }
     }
   ]
 }));
@@ -1097,6 +1312,180 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         body: '{}'
       });
       return { content: jsonContent(data) };
+    }
+
+    if (name === 'gitlab_get_job_token_scope') {
+      if (!a.project_id) throw new Error('project_id is required');
+      // Some GitLab builds reject path ids on job_token_scope mutations; resolve always.
+      const ownerId = await resolveProjectNumericId(a.project_id);
+      const data = await glFetch(`${projPath(ownerId)}/job_token_scope`);
+      return { content: jsonContent(data) };
+    }
+
+    if (name === 'gitlab_list_job_token_allowlist') {
+      if (!a.project_id) throw new Error('project_id is required');
+      const ownerId = await resolveProjectNumericId(a.project_id);
+      const page = Math.max(1, Number(a.page) || 1);
+      const perPage = Math.max(1, Math.min(100, Number(a.per_page) || 50));
+      const params = new URLSearchParams();
+      params.set('page', String(page));
+      params.set('per_page', String(perPage));
+      const data = await glFetch(
+        `${projPath(ownerId)}/job_token_scope/allowlist?${params.toString()}`
+      );
+      return { content: jsonContent(Array.isArray(data) ? data : []) };
+    }
+
+    if (name === 'gitlab_add_job_token_allowlist') {
+      if (!a.project_id || a.target_project_id == null || a.target_project_id === '') {
+        throw new Error('project_id and target_project_id are required');
+      }
+      const ownerId = await resolveProjectNumericId(a.project_id);
+      const targetId = await resolveProjectNumericId(a.target_project_id);
+      const { status, data } = await glFetchStatus(
+        `${projPath(ownerId)}/job_token_scope/allowlist`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ target_project_id: targetId })
+        },
+        [400, 409]
+      );
+      if (status === 409 || isAlreadyPresentAllowlistError(status, data, 'project')) {
+        return {
+          content: jsonContent({
+            already_present: true,
+            source_project_id: ownerId,
+            target_project_id: targetId,
+            message: 'Project already on job token allowlist'
+          })
+        };
+      }
+      if (status >= 400) {
+        throw new Error(`${status}: ${summarizeApiError(data)}`);
+      }
+      return {
+        content: jsonContent(
+          data && typeof data === 'object'
+            ? data
+            : { source_project_id: ownerId, target_project_id: targetId }
+        )
+      };
+    }
+
+    if (name === 'gitlab_remove_job_token_allowlist') {
+      if (!a.project_id || a.target_project_id == null || a.target_project_id === '') {
+        throw new Error('project_id and target_project_id are required');
+      }
+      const ownerId = await resolveProjectNumericId(a.project_id);
+      const targetId = await resolveProjectNumericId(a.target_project_id);
+      const { status, data } = await glFetchStatus(
+        `${projPath(ownerId)}/job_token_scope/allowlist/${targetId}`,
+        { method: 'DELETE' },
+        [400, 404]
+      );
+      if (status === 404 || isAlreadyAbsentAllowlistError(status, data, 'project')) {
+        return {
+          content: jsonContent({
+            ok: true,
+            already_absent: true,
+            source_project_id: ownerId,
+            target_project_id: targetId
+          })
+        };
+      }
+      if (status >= 400) {
+        throw new Error(`${status}: ${summarizeApiError(data)}`);
+      }
+      return {
+        content: jsonContent({
+          ok: true,
+          source_project_id: ownerId,
+          target_project_id: targetId
+        })
+      };
+    }
+
+    if (name === 'gitlab_list_job_token_groups_allowlist') {
+      if (!a.project_id) throw new Error('project_id is required');
+      const ownerId = await resolveProjectNumericId(a.project_id);
+      const page = Math.max(1, Number(a.page) || 1);
+      const perPage = Math.max(1, Math.min(100, Number(a.per_page) || 50));
+      const params = new URLSearchParams();
+      params.set('page', String(page));
+      params.set('per_page', String(perPage));
+      const data = await glFetch(
+        `${projPath(ownerId)}/job_token_scope/groups_allowlist?${params.toString()}`
+      );
+      return { content: jsonContent(Array.isArray(data) ? data : []) };
+    }
+
+    if (name === 'gitlab_add_job_token_groups_allowlist') {
+      if (!a.project_id || a.target_group_id == null || a.target_group_id === '') {
+        throw new Error('project_id and target_group_id are required');
+      }
+      const ownerId = await resolveProjectNumericId(a.project_id);
+      const targetGroupId = await resolveGroupNumericId(a.target_group_id);
+      const { status, data } = await glFetchStatus(
+        `${projPath(ownerId)}/job_token_scope/groups_allowlist`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ target_group_id: targetGroupId })
+        },
+        [400, 409]
+      );
+      if (status === 409 || isAlreadyPresentAllowlistError(status, data, 'group')) {
+        return {
+          content: jsonContent({
+            already_present: true,
+            source_project_id: ownerId,
+            target_group_id: targetGroupId,
+            message: 'Group already on job token groups allowlist'
+          })
+        };
+      }
+      if (status >= 400) {
+        throw new Error(`${status}: ${summarizeApiError(data)}`);
+      }
+      return {
+        content: jsonContent(
+          data && typeof data === 'object'
+            ? data
+            : { source_project_id: ownerId, target_group_id: targetGroupId }
+        )
+      };
+    }
+
+    if (name === 'gitlab_remove_job_token_groups_allowlist') {
+      if (!a.project_id || a.target_group_id == null || a.target_group_id === '') {
+        throw new Error('project_id and target_group_id are required');
+      }
+      const ownerId = await resolveProjectNumericId(a.project_id);
+      const targetGroupId = await resolveGroupNumericId(a.target_group_id);
+      const { status, data } = await glFetchStatus(
+        `${projPath(ownerId)}/job_token_scope/groups_allowlist/${targetGroupId}`,
+        { method: 'DELETE' },
+        [400, 404]
+      );
+      if (status === 404 || isAlreadyAbsentAllowlistError(status, data, 'group')) {
+        return {
+          content: jsonContent({
+            ok: true,
+            already_absent: true,
+            source_project_id: ownerId,
+            target_group_id: targetGroupId
+          })
+        };
+      }
+      if (status >= 400) {
+        throw new Error(`${status}: ${summarizeApiError(data)}`);
+      }
+      return {
+        content: jsonContent({
+          ok: true,
+          source_project_id: ownerId,
+          target_group_id: targetGroupId
+        })
+      };
     }
 
     throw new Error(`Unknown tool: ${name}`);

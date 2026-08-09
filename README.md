@@ -2,8 +2,9 @@
 
 MCP (Model Context Protocol) server for **GitLab** that talks directly to the GitLab HTTP API
 using `GITLAB_API_URL` and `GITLAB_PERSONAL_ACCESS_TOKEN`. Tools cover projects (including
-default branch updates), repository and protected branches, issues (including notes),
-merge requests (create/update/merge/diffs), and CI pipelines & jobs.
+default branch updates), repository and protected branches, CI job token scope / inbound
+allowlists, issues (including notes), merge requests (create/update/merge/diffs), and CI
+pipelines & jobs.
 
 ## Requirements
 
@@ -105,9 +106,17 @@ Or via `npx` (рекомендуется для автоподтягивания
 | Projects | `gitlab_list_projects`, `gitlab_get_project`, `gitlab_update_project` |
 | Branches | `gitlab_list_repository_branches`, `gitlab_create_repository_branch` |
 | Protected branches | `gitlab_list_protected_branches`, `gitlab_protect_branch`, `gitlab_unprotect_branch` |
+| Job token scope | `gitlab_get_job_token_scope`, `gitlab_list_job_token_allowlist`, `gitlab_add_job_token_allowlist`, `gitlab_remove_job_token_allowlist`, `gitlab_list_job_token_groups_allowlist`, `gitlab_add_job_token_groups_allowlist`, `gitlab_remove_job_token_groups_allowlist` |
 | Issues | `gitlab_list_issues`, `gitlab_get_issue`, `gitlab_create_issue`, `gitlab_update_issue`, `gitlab_list_issue_notes`, `gitlab_create_issue_note` |
 | Merge requests | `gitlab_list_merge_requests`, `gitlab_get_merge_request`, `gitlab_create_merge_request`, `gitlab_update_merge_request`, `gitlab_merge_merge_request`, `gitlab_get_merge_request_changes`, `gitlab_list_merge_request_notes`, `gitlab_list_merge_request_discussions` |
 | Pipelines | `gitlab_list_pipelines`, `gitlab_get_pipeline`, `gitlab_create_pipeline`, `gitlab_retry_pipeline`, `gitlab_cancel_pipeline` |
 | Jobs | `gitlab_list_pipeline_jobs`, `gitlab_get_job_trace`, `gitlab_retry_job`, `gitlab_play_job` |
 
 Pipeline and job IDs are numeric (from the API). MR and issue identifiers are **IID** (per-project internal id).
+
+### Job token allowlist notes
+
+- `project_id` — allowlist **owner** (the project being accessed, e.g. a deployable with a container registry). Path or id; **always resolved to numeric id** before API calls (some GitLab builds reject path ids on allowlist POST/DELETE).
+- `target_project_id` / `target_group_id` — source of `CI_JOB_TOKEN`; may be a **numeric id or path** (path is resolved via Projects/Groups API).
+- **Add** and **remove** are **idempotent**: already present → `{ already_present: true }`; already absent → `{ ok: true, already_absent: true }` (GitLab often returns HTTP 400 for these cases; the tools normalize them).
+- Scope flags (`inbound_enabled` / `outbound_enabled`) are read-only via `gitlab_get_job_token_scope` (no patch tool).
