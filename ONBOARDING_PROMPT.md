@@ -26,10 +26,16 @@ ONBOARDING: custom GitLab MCP over HTTP API
   `gitlab_create_merge_request`, `gitlab_update_merge_request`,
   `gitlab_merge_merge_request`, `gitlab_get_merge_request_changes`,
   `gitlab_list_merge_request_notes`, `gitlab_list_merge_request_discussions`
-- **CI/CD:** `gitlab_list_pipelines`, `gitlab_get_pipeline`,
+- **CI/CD pipelines & jobs:** `gitlab_list_pipelines`, `gitlab_get_pipeline`,
   `gitlab_create_pipeline`, `gitlab_retry_pipeline`, `gitlab_cancel_pipeline`,
   `gitlab_list_pipeline_jobs`, `gitlab_get_job_trace`, `gitlab_retry_job`,
-  `gitlab_play_job`
+  `gitlab_play_job`. У `gitlab_create_pipeline.variables` — только **ephemeral**
+  (на один trigger), не Settings → CI/CD → Variables.
+- **CI/CD variables (persistent, project/group):** list/get/create/update/delete +
+  **upsert** (`gitlab_*_project_variable` / `gitlab_*_group_variable`). List по
+  умолчанию **без `value`** (`include_values: true` только осознанно). Upsert —
+  предпочтительный путь для агента (например group `cubekit-v2` masked vars).
+  Пишут секреты — только по явной задаче; не светить `value` в чат.
 
 Расширять функциональность лучше небольшими, хорошо описанными инструментами
 поверх HTTP API GitLab (см. официальную документацию GitLab API).

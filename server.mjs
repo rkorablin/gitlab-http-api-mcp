@@ -29,6 +29,10 @@ function projPath(id) {
   return `/projects/${encodeURIComponent(String(id))}`;
 }
 
+function groupPath(id) {
+  return `/groups/${encodeURIComponent(String(id))}`;
+}
+
 function parseBody(text) {
   if (!text) return null;
   try {
@@ -159,8 +163,80 @@ function encodeProjectId(projectId) {
   return encodeURIComponent(String(projectId));
 }
 
+/** Drop `value` from a CI/CD variable object (list responses / secret hygiene). */
+function variableMetadata(v) {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return v;
+  const { value: _omit, ...meta } = v;
+  return meta;
+}
+
+function stripVariableValues(list) {
+  return (Array.isArray(list) ? list : []).map(variableMetadata);
+}
+
+/** Map tool arg → GitLab `filter[environment_scope]` query. */
+function appendEnvScopeFilter(params, a) {
+  const scope = a.filter_environment_scope;
+  if (scope != null && String(scope) !== '') {
+    params.set('filter[environment_scope]', String(scope));
+  }
+}
+
+function buildVariableWriteBody(a, { requireKey = false, requireValue = false } = {}) {
+  const body = {};
+  if (a.key != null && a.key !== '') body.key = String(a.key);
+  else if (requireKey) throw new Error('key is required');
+  if (a.value !== undefined) body.value = String(a.value);
+  else if (requireValue) throw new Error('value is required');
+  if (a.variable_type != null) body.variable_type = String(a.variable_type);
+  if (a.protected !== undefined) body.protected = Boolean(a.protected);
+  if (a.masked !== undefined) body.masked = Boolean(a.masked);
+  if (a.raw !== undefined) body.raw = Boolean(a.raw);
+  if (a.environment_scope != null) body.environment_scope = String(a.environment_scope);
+  if (a.description != null) body.description = String(a.description);
+  return body;
+}
+
+function isVariableAlreadyExistsError(status, data) {
+  if (status !== 400 && status !== 409) return false;
+  const msg = summarizeApiError(data).toLowerCase();
+  return (
+    status === 409 ||
+    msg.includes('has already been taken') ||
+    msg.includes('already exists') ||
+    msg.includes('duplicate')
+  );
+}
+
+const VARIABLE_WRITE_PROPS = {
+  variable_type: {
+    type: 'string',
+    description: 'env_var (default) | file'
+  },
+  protected: {
+    type: 'boolean',
+    description: 'Only available on protected branches/tags'
+  },
+  masked: {
+    type: 'boolean',
+    description: 'Masked in job logs (GitLab charset/length rules apply)'
+  },
+  raw: {
+    type: 'boolean',
+    description: 'If true, do not expand $variables in value'
+  },
+  environment_scope: {
+    type: 'string',
+    description: 'Environment scope (default *)'
+  },
+  description: {
+    type: 'string',
+    description: 'Optional description (if GitLab instance supports it)'
+  }
+};
+
 const server = new Server(
-  { name: 'gitlab-http-api-mcp', version: '0.2.5' },
+  { name: 'gitlab-http-api-mcp', version: '0.2.6' },
   { capabilities: { tools: {} } }
 );
 
@@ -593,7 +669,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'gitlab_create_pipeline',
-      description: 'Trigger a pipeline on a ref (POST /projects/:id/pipeline).',
+      description:
+        'Trigger a pipeline on a ref (POST /projects/:id/pipeline). The `variables` argument is ephemeral (one-shot for this pipeline only). For persistent Settings → CI/CD → Variables use gitlab_*_project_variable / gitlab_*_group_variable.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -601,7 +678,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           ref: { type: 'string', description: 'Branch or tag' },
           variables: {
             type: 'array',
-            description: 'CI variables: [{ key, value }]',
+            description:
+              'Ephemeral pipeline variables only: [{ key, value }]. Not the same as project/group CI/CD variables CRUD.',
             items: {
               type: 'object',
               properties: {
@@ -818,6 +896,212 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           }
         },
         required: ['project_id', 'target_group_id']
+      }
+    },
+
+    {
+      name: 'gitlab_list_project_variables',
+      description:
+        'List persistent project CI/CD variables (GET /projects/:id/variables). By default values are omitted (metadata only); set include_values=true to include secrets (avoid dumping into chat). Not the same as gitlab_create_pipeline.variables.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project_id: { type: 'string', description: 'Project ID or path' },
+          include_values: {
+            type: 'boolean',
+            description: 'If true, include value fields (secrets). Default false.',
+            default: false
+          },
+          page: { type: 'number', default: 1 },
+          per_page: { type: 'number', default: 50 }
+        },
+        required: ['project_id']
+      }
+    },
+    {
+      name: 'gitlab_get_project_variable',
+      description:
+        'Get one persistent project CI/CD variable (GET /projects/:id/variables/:key). Returns value — treat as secret. Use filter_environment_scope when the same key exists under multiple scopes.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project_id: { type: 'string' },
+          key: { type: 'string' },
+          filter_environment_scope: {
+            type: 'string',
+            description: 'Maps to filter[environment_scope] when key+scope duplicates exist'
+          }
+        },
+        required: ['project_id', 'key']
+      }
+    },
+    {
+      name: 'gitlab_create_project_variable',
+      description:
+        'Create a persistent project CI/CD variable (POST /projects/:id/variables). Prefer gitlab_upsert_project_variable for idempotent agent flows. Masked vars must satisfy GitLab charset/length rules.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project_id: { type: 'string' },
+          key: { type: 'string' },
+          value: { type: 'string', description: 'Variable value (secret — not logged by this server)' },
+          ...VARIABLE_WRITE_PROPS
+        },
+        required: ['project_id', 'key', 'value']
+      }
+    },
+    {
+      name: 'gitlab_update_project_variable',
+      description:
+        'Update a persistent project CI/CD variable (PUT /projects/:id/variables/:key). Pass value when changing it; flags optional.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project_id: { type: 'string' },
+          key: { type: 'string' },
+          value: { type: 'string', description: 'New value (omit only if GitLab allows partial update — usually send value)' },
+          filter_environment_scope: {
+            type: 'string',
+            description: 'Maps to filter[environment_scope]'
+          },
+          ...VARIABLE_WRITE_PROPS
+        },
+        required: ['project_id', 'key']
+      }
+    },
+    {
+      name: 'gitlab_delete_project_variable',
+      description:
+        'Delete a persistent project CI/CD variable (DELETE /projects/:id/variables/:key). Idempotent: missing → { ok: true, already_absent: true }.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project_id: { type: 'string' },
+          key: { type: 'string' },
+          filter_environment_scope: {
+            type: 'string',
+            description: 'Maps to filter[environment_scope]'
+          }
+        },
+        required: ['project_id', 'key']
+      }
+    },
+    {
+      name: 'gitlab_upsert_project_variable',
+      description:
+        'Idempotent ensure project CI/CD variable exists with given value/flags: GET → create or update. Preferred for agent workflows.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project_id: { type: 'string' },
+          key: { type: 'string' },
+          value: { type: 'string' },
+          ...VARIABLE_WRITE_PROPS
+        },
+        required: ['project_id', 'key', 'value']
+      }
+    },
+
+    {
+      name: 'gitlab_list_group_variables',
+      description:
+        'List persistent group CI/CD variables (GET /groups/:id/variables). By default values omitted; set include_values=true to include secrets.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          group_id: { type: 'string', description: 'Group ID or path (e.g. cubekit-v2)' },
+          include_values: {
+            type: 'boolean',
+            description: 'If true, include value fields (secrets). Default false.',
+            default: false
+          },
+          page: { type: 'number', default: 1 },
+          per_page: { type: 'number', default: 50 }
+        },
+        required: ['group_id']
+      }
+    },
+    {
+      name: 'gitlab_get_group_variable',
+      description:
+        'Get one persistent group CI/CD variable (GET /groups/:id/variables/:key). Returns value — treat as secret.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          group_id: { type: 'string' },
+          key: { type: 'string' },
+          filter_environment_scope: {
+            type: 'string',
+            description: 'Maps to filter[environment_scope]'
+          }
+        },
+        required: ['group_id', 'key']
+      }
+    },
+    {
+      name: 'gitlab_create_group_variable',
+      description:
+        'Create a persistent group CI/CD variable (POST /groups/:id/variables). Prefer gitlab_upsert_group_variable for idempotent agent flows.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          group_id: { type: 'string' },
+          key: { type: 'string' },
+          value: { type: 'string' },
+          ...VARIABLE_WRITE_PROPS
+        },
+        required: ['group_id', 'key', 'value']
+      }
+    },
+    {
+      name: 'gitlab_update_group_variable',
+      description:
+        'Update a persistent group CI/CD variable (PUT /groups/:id/variables/:key).',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          group_id: { type: 'string' },
+          key: { type: 'string' },
+          value: { type: 'string' },
+          filter_environment_scope: {
+            type: 'string',
+            description: 'Maps to filter[environment_scope]'
+          },
+          ...VARIABLE_WRITE_PROPS
+        },
+        required: ['group_id', 'key']
+      }
+    },
+    {
+      name: 'gitlab_delete_group_variable',
+      description:
+        'Delete a persistent group CI/CD variable (DELETE /groups/:id/variables/:key). Idempotent if already absent.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          group_id: { type: 'string' },
+          key: { type: 'string' },
+          filter_environment_scope: {
+            type: 'string',
+            description: 'Maps to filter[environment_scope]'
+          }
+        },
+        required: ['group_id', 'key']
+      }
+    },
+    {
+      name: 'gitlab_upsert_group_variable',
+      description:
+        'Idempotent ensure group CI/CD variable exists with given value/flags: GET → create or update. Preferred for agent workflows (e.g. Cubekit group cubekit-v2).',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          group_id: { type: 'string' },
+          key: { type: 'string' },
+          value: { type: 'string' },
+          ...VARIABLE_WRITE_PROPS
+        },
+        required: ['group_id', 'key', 'value']
       }
     }
   ]
@@ -1486,6 +1770,236 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           target_group_id: targetGroupId
         })
       };
+    }
+
+    // --- Project CI/CD variables (persistent Settings → CI/CD → Variables) ---
+
+    if (name === 'gitlab_list_project_variables') {
+      if (!a.project_id) throw new Error('project_id is required');
+      const page = Math.max(1, Number(a.page) || 1);
+      const perPage = Math.max(1, Math.min(100, Number(a.per_page) || 50));
+      const params = new URLSearchParams();
+      params.set('page', String(page));
+      params.set('per_page', String(perPage));
+      const data = await glFetch(`${projPath(a.project_id)}/variables?${params.toString()}`);
+      const list = Array.isArray(data) ? data : [];
+      return {
+        content: jsonContent(a.include_values === true ? list : stripVariableValues(list))
+      };
+    }
+
+    if (name === 'gitlab_get_project_variable') {
+      if (!a.project_id || !a.key) throw new Error('project_id and key are required');
+      const params = new URLSearchParams();
+      appendEnvScopeFilter(params, a);
+      const q = params.toString();
+      const data = await glFetch(
+        `${projPath(a.project_id)}/variables/${encodeURIComponent(String(a.key))}${q ? `?${q}` : ''}`
+      );
+      return { content: jsonContent(data) };
+    }
+
+    if (name === 'gitlab_create_project_variable') {
+      if (!a.project_id) throw new Error('project_id is required');
+      const body = buildVariableWriteBody(a, { requireKey: true, requireValue: true });
+      const { status, data } = await glFetchStatus(
+        `${projPath(a.project_id)}/variables`,
+        { method: 'POST', body: JSON.stringify(body) },
+        [400, 409]
+      );
+      if (isVariableAlreadyExistsError(status, data)) {
+        return {
+          content: jsonContent({
+            error: 'variable_already_exists',
+            key: body.key,
+            environment_scope: body.environment_scope ?? '*',
+            message:
+              'Variable with this key (and scope) already exists. Use gitlab_update_project_variable or gitlab_upsert_project_variable.',
+            gitlab: summarizeApiError(data)
+          }),
+          isError: true
+        };
+      }
+      if (status >= 400) {
+        throw new Error(`${status}: ${summarizeApiError(data)}`);
+      }
+      return { content: jsonContent(data) };
+    }
+
+    if (name === 'gitlab_update_project_variable') {
+      if (!a.project_id || !a.key) throw new Error('project_id and key are required');
+      const body = buildVariableWriteBody(a);
+      delete body.key;
+      const params = new URLSearchParams();
+      appendEnvScopeFilter(params, a);
+      const q = params.toString();
+      const data = await glFetch(
+        `${projPath(a.project_id)}/variables/${encodeURIComponent(String(a.key))}${q ? `?${q}` : ''}`,
+        { method: 'PUT', body: JSON.stringify(body) }
+      );
+      return { content: jsonContent(data) };
+    }
+
+    if (name === 'gitlab_delete_project_variable') {
+      if (!a.project_id || !a.key) throw new Error('project_id and key are required');
+      const key = String(a.key);
+      const params = new URLSearchParams();
+      appendEnvScopeFilter(params, a);
+      const q = params.toString();
+      const { status, data } = await glFetchStatus(
+        `${projPath(a.project_id)}/variables/${encodeURIComponent(key)}${q ? `?${q}` : ''}`,
+        { method: 'DELETE' },
+        [404]
+      );
+      if (status === 404) {
+        return { content: jsonContent({ ok: true, already_absent: true, key }) };
+      }
+      if (status >= 400) {
+        throw new Error(`${status}: ${summarizeApiError(data)}`);
+      }
+      return { content: jsonContent({ ok: true, key }) };
+    }
+
+    if (name === 'gitlab_upsert_project_variable') {
+      if (!a.project_id || !a.key) throw new Error('project_id and key are required');
+      const key = String(a.key);
+      const params = new URLSearchParams();
+      if (a.environment_scope != null && String(a.environment_scope) !== '') {
+        params.set('filter[environment_scope]', String(a.environment_scope));
+      }
+      const q = params.toString();
+      const getPath = `${projPath(a.project_id)}/variables/${encodeURIComponent(key)}${q ? `?${q}` : ''}`;
+      const { status: getStatus } = await glFetchStatus(getPath, {}, [404]);
+      if (getStatus === 404) {
+        const body = buildVariableWriteBody(a, { requireKey: true, requireValue: true });
+        const created = await glFetch(`${projPath(a.project_id)}/variables`, {
+          method: 'POST',
+          body: JSON.stringify(body)
+        });
+        return { content: jsonContent({ upserted: 'created', variable: created }) };
+      }
+      const body = buildVariableWriteBody(a, { requireValue: true });
+      delete body.key;
+      const updated = await glFetch(getPath, {
+        method: 'PUT',
+        body: JSON.stringify(body)
+      });
+      return { content: jsonContent({ upserted: 'updated', variable: updated }) };
+    }
+
+    // --- Group CI/CD variables ---
+
+    if (name === 'gitlab_list_group_variables') {
+      if (!a.group_id) throw new Error('group_id is required');
+      const page = Math.max(1, Number(a.page) || 1);
+      const perPage = Math.max(1, Math.min(100, Number(a.per_page) || 50));
+      const params = new URLSearchParams();
+      params.set('page', String(page));
+      params.set('per_page', String(perPage));
+      const data = await glFetch(`${groupPath(a.group_id)}/variables?${params.toString()}`);
+      const list = Array.isArray(data) ? data : [];
+      return {
+        content: jsonContent(a.include_values === true ? list : stripVariableValues(list))
+      };
+    }
+
+    if (name === 'gitlab_get_group_variable') {
+      if (!a.group_id || !a.key) throw new Error('group_id and key are required');
+      const params = new URLSearchParams();
+      appendEnvScopeFilter(params, a);
+      const q = params.toString();
+      const data = await glFetch(
+        `${groupPath(a.group_id)}/variables/${encodeURIComponent(String(a.key))}${q ? `?${q}` : ''}`
+      );
+      return { content: jsonContent(data) };
+    }
+
+    if (name === 'gitlab_create_group_variable') {
+      if (!a.group_id) throw new Error('group_id is required');
+      const body = buildVariableWriteBody(a, { requireKey: true, requireValue: true });
+      const { status, data } = await glFetchStatus(
+        `${groupPath(a.group_id)}/variables`,
+        { method: 'POST', body: JSON.stringify(body) },
+        [400, 409]
+      );
+      if (isVariableAlreadyExistsError(status, data)) {
+        return {
+          content: jsonContent({
+            error: 'variable_already_exists',
+            key: body.key,
+            environment_scope: body.environment_scope ?? '*',
+            message:
+              'Variable with this key (and scope) already exists. Use gitlab_update_group_variable or gitlab_upsert_group_variable.',
+            gitlab: summarizeApiError(data)
+          }),
+          isError: true
+        };
+      }
+      if (status >= 400) {
+        throw new Error(`${status}: ${summarizeApiError(data)}`);
+      }
+      return { content: jsonContent(data) };
+    }
+
+    if (name === 'gitlab_update_group_variable') {
+      if (!a.group_id || !a.key) throw new Error('group_id and key are required');
+      const body = buildVariableWriteBody(a);
+      delete body.key;
+      const params = new URLSearchParams();
+      appendEnvScopeFilter(params, a);
+      const q = params.toString();
+      const data = await glFetch(
+        `${groupPath(a.group_id)}/variables/${encodeURIComponent(String(a.key))}${q ? `?${q}` : ''}`,
+        { method: 'PUT', body: JSON.stringify(body) }
+      );
+      return { content: jsonContent(data) };
+    }
+
+    if (name === 'gitlab_delete_group_variable') {
+      if (!a.group_id || !a.key) throw new Error('group_id and key are required');
+      const key = String(a.key);
+      const params = new URLSearchParams();
+      appendEnvScopeFilter(params, a);
+      const q = params.toString();
+      const { status, data } = await glFetchStatus(
+        `${groupPath(a.group_id)}/variables/${encodeURIComponent(key)}${q ? `?${q}` : ''}`,
+        { method: 'DELETE' },
+        [404]
+      );
+      if (status === 404) {
+        return { content: jsonContent({ ok: true, already_absent: true, key }) };
+      }
+      if (status >= 400) {
+        throw new Error(`${status}: ${summarizeApiError(data)}`);
+      }
+      return { content: jsonContent({ ok: true, key }) };
+    }
+
+    if (name === 'gitlab_upsert_group_variable') {
+      if (!a.group_id || !a.key) throw new Error('group_id and key are required');
+      const key = String(a.key);
+      const params = new URLSearchParams();
+      if (a.environment_scope != null && String(a.environment_scope) !== '') {
+        params.set('filter[environment_scope]', String(a.environment_scope));
+      }
+      const q = params.toString();
+      const getPath = `${groupPath(a.group_id)}/variables/${encodeURIComponent(key)}${q ? `?${q}` : ''}`;
+      const { status: getStatus } = await glFetchStatus(getPath, {}, [404]);
+      if (getStatus === 404) {
+        const body = buildVariableWriteBody(a, { requireKey: true, requireValue: true });
+        const created = await glFetch(`${groupPath(a.group_id)}/variables`, {
+          method: 'POST',
+          body: JSON.stringify(body)
+        });
+        return { content: jsonContent({ upserted: 'created', variable: created }) };
+      }
+      const body = buildVariableWriteBody(a, { requireValue: true });
+      delete body.key;
+      const updated = await glFetch(getPath, {
+        method: 'PUT',
+        body: JSON.stringify(body)
+      });
+      return { content: jsonContent({ upserted: 'updated', variable: updated }) };
     }
 
     throw new Error(`Unknown tool: ${name}`);

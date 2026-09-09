@@ -1,7 +1,7 @@
 {
   "name": "gitlab-http-api-mcp",
-  "version": "0.2.5",
-  "description": "MCP server for GitLab over HTTP API (projects, branches, protected branches, job token scope, issues, MRs, CI)",
+  "version": "0.2.6",
+  "description": "MCP server for GitLab over HTTP API (projects, branches, protected branches, job token scope, CI/CD variables, issues, MRs, CI)",
   "type": "module",
   "main": "server.mjs",
   "bin": {
